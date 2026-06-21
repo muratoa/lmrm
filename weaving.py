@@ -1,4 +1,6 @@
 import argparse
+import copy
+import cv2
 import matplotlib.image as img
 import numpy as np
 import math
@@ -13,6 +15,69 @@ KEY[1] = "BGRGRGRG"
 WARP_FACE_0 = KEY[0]*8
 WARP_FACE_1 = KEY[1]*8
 WEFT_FACE = ''.join([_*8 for _ in KEY[0]])
+
+
+class HeatherMackenzie:
+
+    def __init__(self):
+        return
+
+    def base_twill(self):
+
+        aa = np.tile(np.array([1]*4+[0]*12),(4,1))
+ 
+        return np.vstack((aa,np.roll(aa,4),np.roll(aa,8),np.roll(aa,12)))
+
+    def roll_by_column(self, input_ws):
+
+        ws = copy.deepcopy(input_ws)
+
+        nr,nc = ws.shape
+        for i in range(nc):
+            ws[:,i] = np.roll(ws[:,i], i % 4, 0)
+
+        return ws
+
+    def zero_out_columns(self, input_ws, func):
+
+        ws = copy.deepcopy(input_ws)
+
+        nr,nc = ws.shape
+        for i in range(nc):
+            if func(i):
+                ws[:,i] = np.zeros(nr)
+
+        return ws
+
+def grab_channels(image_path):
+    image = cv2.imread(image_path)
+
+    b = image.copy()
+    # set green and red channels to 0
+    b[:, :, 1] = 0
+    b[:, :, 2] = 0
+
+    g = image.copy()
+    # set blue and red channels to 0
+    g[:, :, 0] = 0
+    g[:, :, 2] = 0
+
+    r = image.copy()
+    # set blue and green channels to 0
+    r[:, :, 0] = 0
+    r[:, :, 1] = 0
+
+
+    # RGB - Blue
+    cv2.imshow('B-RGB', b)
+
+    # RGB - Green
+    cv2.imshow('G-RGB', g)
+
+    # RGB - Red
+    cv2.imshow('R-RGB', r)
+
+    cv2.waitKey(0)
 
 def convolution(input_matrix, kernel):
     input_h, input_w = input_matrix.shape
@@ -47,7 +112,7 @@ def double_cloth_interleave(weave_a, weave_b):
     weave_b = ~(weave_b.astype(np.bool))
 
     n_picks,n_ends = weave_a.shape
-    weave_c = np.zeros((2*n_picks,2*n_ends))
+    weave_c = np.zeros((2*n_picks,2*n_ends)).astype(np.bool)
 
     for i in range(2*n_picks):
 
@@ -276,11 +341,11 @@ def convert_image_to_rgb(image_path, loom_width=3520):
 
     return bmp
 
-def convert_to_indexed_shading(image_path, structures, num_ends_loom=3520, blur_dim=0, trim_max_perc=0.95):
+def convert_to_indexed_shading(image_path, structures, num_ends_loom=3520, rescale_picks=1.0, blur_dim=0, trim_max_perc=0.95):
 
     num_layers = len(structures)
 
-    image_set = convert_image_to_set(image_path, num_layers, num_ends_loom)
+    image_set = convert_image_to_set(image_path, num_layers, num_ends_loom, rescale_picks)
 
     if blur_dim > 0:
         image_set = convert_array_to_set(blur(image_set, blur_dim), num_layers, transpose=False, trim_max_perc=trim_max_perc)
@@ -289,26 +354,36 @@ def convert_to_indexed_shading(image_path, structures, num_ends_loom=3520, blur_
 
     structs = [resize_strct_to_layer(_, num_picks, num_ends) for _ in structures]
 
-    return apply_layers(image_set, structs)
+    res = apply_layers(image_set, structs)
+    
+    #strct = shaded_satin_square_float_dbl(64,1,False).transpose()
+    #layer = resize_strct_to_layer(strct, num_picks, num_ends)
+    #mask = np.vectorize(lambda x:int(x == 0))(res)
+    #res += np.multiply(mask, layer).astype(np.uint8)
 
-def convert_image_to_set(image_path, num_layers, num_ends=3520):
+    return res
+
+def convert_image_to_set(image_path, num_layers, num_ends=3520, rescale_picks=1.0):
 
     tmp = np.asarray(Image.open(image_path))
 
     img = Image.open(image_path)
     img_gr = img.convert('L')
-    img_gr = img_gr.transpose(Image.ROTATE_90)
+    #img_gr = img_gr.transpose(Image.ROTATE_90)
 
     # jpg images are columns x rows
     nrow, ncol = img_gr.size
  
     a_rat = num_ends / float(ncol)
     img_rs = img_gr.resize((int(a_rat * nrow), num_ends), Image.NEAREST)
+    
+    nrow, _ = img_rs.size
+    img_rs = img_rs.resize((int(rescale_picks * nrow), num_ends), Image.NEAREST)
 
     return convert_array_to_set(img_rs, num_layers, transpose=True)
 
 def convert_array_to_set(img_arr, num_layers, transpose=False, trim_max_perc=1.0):
-    xx = np.array(img_arr)
+    xx = np.array(img_arr).astype(np.uint16)
     if transpose:
         xx = xx.T
     mx_v = (xx.max() + 1) * trim_max_perc
@@ -316,16 +391,16 @@ def convert_array_to_set(img_arr, num_layers, transpose=False, trim_max_perc=1.0
 
 def apply_layers(image_set, layers):
 
-    LRG_PRM = 422353
-    image_set[image_set == 0] = LRG_PRM
+    #LRG_PRM = 422353
+    #image_set[image_set == 0] = LRG_PRM
 
     res = np.zeros(image_set.shape)
 
     for idx in range(len(layers)):
-        if idx == 0:
-            mask = np.vectorize(lambda x:int(x == LRG_PRM))(image_set)
-        else:
-            mask = np.vectorize(lambda x:int(x == idx))(image_set)
+        #if idx == 0:
+            #    mask = np.vectorize(lambda x:int(x == LRG_PRM))(image_set)
+        #else:
+        mask = np.vectorize(lambda x:int(x == idx))(image_set)
         res += np.multiply(mask, layers[idx])
 
     return res.astype(np.uint8)
@@ -364,6 +439,9 @@ def shaded_satin_square_float_dbl(num_ends=16, weft_face_cnt=4, weft_build=False
             ss_d[2*i,2*j+1] = 0
             ss_d[2*i+1,2*j+1] = 0
 
+    for i in range(num_ends):
+        if i % 2 == 0:
+            ss_d[i,] = np.roll(ss_d[i,], 1 if (i % 4 == 0) else -1)
     return ss_d
 
 def resize_strct_to_layer(wv_strct, num_picks, num_ends):
@@ -548,25 +626,58 @@ def write_to_file(weave_array, file_path, invert, transpose=False):
 def main(args):
 
     parser = argparse.ArgumentParser()    
-    
-    parser.add_argument('-i','--input', help='input file path')
+   
+    parser.add_argument('-i','--input-list', nargs='+', help='<Required> intput files', required=True)
+#    parser.add_argument('-i','--input', help='input file path')
     parser.add_argument('--output-shaded-satin', default=None, help='outut file path')
     parser.add_argument('--output-double-warp', default=None, help='outut file path')
     parser.add_argument('--output-rgb-weaving', default=None, help='outut file path')
     parser.add_argument('--reverse', action="store_true", help='swap warp/weft facing')
     parser.add_argument('--warp-ends', default=3520, type=np.uint16, help='number of ends')
+    parser.add_argument('--rescale-picks', default=1.0, type=float, help='rescale pick count for aspect ratio')
     parser.add_argument('--num-layers', default=4, type=np.uint8, help='number of layers')
     parser.add_argument('--num-ends-structure', default=16, type=np.uint8, help='number of ends for structures')
     parser.add_argument('-g','--game-of-life', help='game of life iteration cound [default=0]', type=np.uint8, default=0)
 
     args = parser.parse_args()
 
+
+# assumes end and end warps, and 3 picks between piles
+def velvet_pw(num_picks, num_warp_ends):
+    return np.tile(np.array([[1,0,1,0],[0,1,0,1],[1,0,1,0],[0,0,0,0],[0,1,0,1],[1,0,1,0],[0,1,0,1],[0,0,0,0]]), (int(num_picks/8),int(num_warp_ends/4)))
+
+def velvet_pickup_mask(v_pw):
+
+    aa=np.zeros(v_pw.shape[1]);aa[[_ for _ in range(2,v_pw.shape[1],4)]]=1
+    bb=np.zeros(v_pw.shape[1]);bb[[_ for _ in range(4,v_pw.shape[1],4)]]=1
+    
+    for i in range(3,v_pw.shape[0],8):
+        v_pw[i,] = aa
+    for i in range(7,v_pw.shape[0],8):
+        v_pw[i,] = bb
+
+    v_pw = np.flip(v_pw,axis=0)
+    return v_pw
+ 
+    v_pw = velvet_pw(400,1760)
+    v_pw = velvet_pickup_mask(v_pw)
+
+    write_to_file(v_pw,"/Users/muratahmed/Desktop/velvet_pw.bmp",invert=True,transpose=True)
+    import pdb;pdb.set_trace()
+
+    #hm = HeatherMackenzie()
+    #bt = hm.base_twill()
+    #hm_t = hm.roll_by_column(bt)
+    #hm_cm = hm.zero_out_columns(hm_t, lambda x : (x) % 2)
+    #hm_yk = hm.zero_out_columns(hm_t, lambda x : ((x+2)) % 2)
+    #ws = double_cloth_interleave(hm_cm, hm_yk)
+    #write_to_file(ws, args.output_shaded_satin, invert=False, transpose=False)
+
     ss_0 = list()
     ss_1 = list()
     for i in range(0,32):
         ss_0.append(shaded_satin_square_float_dbl(32,i,False).transpose())
-        ss_1.append(shaded_satin_square_float_dbl(32,i,True))
-        write_to_file(ss_1[-1], "/Users/muratahmed/Desktop/ss_16_{}_weft.bmp".format(i), False)
+        ss_1.append(shaded_satin_square(32,i,True))
 
     if args.output_rgb_weaving:
         weaving_ss0 = convert_image_to_rgb(args.input, loom_width=1168)
@@ -578,22 +689,51 @@ def main(args):
 
     if args.output_shaded_satin:
 
-        structures = [ss_1[idx] for idx in [0,4,29]]
-        w_sc = convert_to_indexed_shading(args.input, structures, args.warp_ends, blur_dim=24, trim_max_perc=0.95)
+        #grab_channels(args.input_list[0])
 
-        #_,pw_sc  = resize_structures_to_match(w_sc, plain_sc_extend(16))
-        #w_dc     = double_cloth_interleave(w_sc, pw_sc)
-        slvdg    = np.tile(plain_dc(4,4), ((w_sc.shape[0] // 4) + 1, 4))[:w_sc.shape[0],:]
+        structures = [ss_1[idx] for idx in reversed([2,8,10,26])]
+        for idx,sss in enumerate(structures):
+            write_to_file(sss, "/Users/muratahmed/Desktop/ss_{}_weft.bmp".format(idx), False)
 
-        w_out = np.hstack((w_sc,slvdg))
-        #w_out = np.hstack((slvdg,w_sc))
-        w_out = w_out[:,:args.warp_ends]
+        weaving = np.array(0)
+        for fh in args.input_list:
+            w_sc = convert_to_indexed_shading(fh, structures, args.warp_ends, args.rescale_picks, blur_dim=24, trim_max_perc=0.95)
+            #_,pw_sc  = resize_structures_to_match(w_sc, plain_sc_extend(16))
+            #w_dc     = double_cloth_interleave(w_sc, pw_sc)
+ 
+            if weaving.any():
+                nr,nc = weaving.shape
+                nr = min(nr, w_sc.shape[0])
+                nc = min(nc, w_sc.shape[1])
+
+                plain = np.tile(plain_dc(4,4), ((weaving.shape[0] // 4) + 1, 16))[:weaving.shape[0],:60]
+                weaving = np.hstack((weaving[:nr,:nc],plain,w_sc[:nr,:nc]))
+            else:
+                weaving = w_sc
+            print(fh)
+            print(weaving.shape)
+
+        tmp = np.zeros(weaving.shape[1])
+        for i in range(len(tmp)):
+            if i % 16 == 0:
+                tmp[i] = 1
+
+        for idx,row in enumerate(range(weaving.shape[0])):
+            weaving[idx,] = (weaving[idx,] + np.roll(tmp,idx)) % 2
+            
+        slvdg = np.tile(plain_dc(4,4), ((weaving.shape[0] // 4) + 1, 4))[:weaving.shape[0],:]
 
         reverse_weaving = False
         if args.reverse:
-            reverse_weaving = True
+            #reverse_weaving = True
+            import pdb;pdb.set_trace()
 
+        w_out = np.hstack((slvdg,weaving,slvdg))
+
+        nrow, ncol = w_out.shape
         write_to_file(w_out, args.output_shaded_satin, reverse_weaving, transpose=True)
+        write_to_file(w_out[:,:ncol//2], '/Users/muratahmed/Desktop/left_channel.bmp', reverse_weaving, transpose=True)
+        write_to_file(w_out[:,ncol//2:ncol], '/Users/muratahmed/Desktop/right_channel.bmp', reverse_weaving, transpose=True)
  
 if __name__ == '__main__':
 
